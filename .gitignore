@@ -1,0 +1,5 @@
+/build
+/lake-packages/*
+/lakefile.olean
+# After v4.3.0-rc2 lake stores its files here:
+/.lake/
