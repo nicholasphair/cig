@@ -2,53 +2,44 @@ import Lean
 import Lean.Data.Json.Basic
 import Lean.Data.Json.Parser
 import Lean.Data.Json.Printer
--- can I invoke openapi directly for demo tomorrow?
 
 open Lean Json ToJson FromJson
 
-def newline := "\n"
-
 namespace Concepts
 
-class ToConceptImpl (α : Type) where
-  toSchema : α → Lean.Json  -- need JSON Schema repr for openAPI.
+class ToSchema (a: Type u) where
+  toJsonSchema : a → Json
 
-inductive ConceptPrimitiveTypes
-| Number : ConceptPrimitiveTypes
-| Boolean : ConceptPrimitiveTypes
-| String : ConceptPrimitiveTypes
+class ToConceptImpl (a: Type u) where
+  toOpenAPISpec : a → Json
 
-instance: ToConceptImpl ConceptPrimitiveTypes where
-  toSchema : ConceptPrimitiveTypes → Json
-  | ConceptPrimitiveTypes.Number => Json.mkObj [("type", "number")]
-  | ConceptPrimitiveTypes.Boolean => Json.mkObj [("type", "boolean")]
-  | ConceptPrimitiveTypes.String => Json.mkObj [("type", "string")]
+-- A language of types.
+inductive CTypes
+| Nat: CTypes
+| Bool: CTypes
+| String: CTypes
+| Unit: CTypes
+| Ptr (c: CTypes) : CTypes
+| Func (arg : CTypes) (ret: CTypes): CTypes
+| UserDefined (adt : Type) : CTypes
 
-instance [ToConceptImpl α]: ToConceptImpl (Array α) where
-  toSchema x := Json.arr (Array.map ToConceptImpl.toSchema x)
+instance: ToSchema CTypes where
+  toJsonSchema : CTypes → Json
+  | CTypes.Nat => Json.mkObj [("type", "number")]
+  | CTypes.Bool => Json.mkObj [("type", "boolean")]
+  | CTypes.String => Json.mkObj [("type", "string")]
+  | _ => Json.mkObj [("error", "NotImplemented")]
 
--- NB (nphair) I do not care the argument type so long as I can represent it with a JSON schema.
---  Not just as JSON, but as JSON Schema.
-structure Var (α : Type) [ToConceptImpl α] where
+structure Action where
   name: String
-  type: α
+  args: Array (String × CTypes)
+  ret: CTypes
 
-instance [ToConceptImpl α]: ToJson (Var α)  where
-  toJson : (Var α) → Json
-  | {name:= n, type:=t}=> Json.mkObj [(n, ToConceptImpl.toSchema t)]
+def toPair: (String × CTypes) → (String × Json)
+| (name, type) => (name, ToSchema.toJsonSchema type)
 
--- NB (nphair) I think I want to be chaining instances. That is, when needed, first convert a structure to a JSON Schema
---  then convert that to JSON. Don't yet know how to do that in Lean though.
-structure AAction (α : Type) [ToConceptImpl α] where
-  name: String
-  args: Array (Var α)
-  ret: α
-
-
-def toPair [ToConceptImpl α] (v : Var α) : (String × Json) := (v.name, ToConceptImpl.toSchema v.type)
-
-instance [ToConceptImpl α]: ToJson (AAction α)  where
-  toJson : (AAction α) -> Json
+instance: ToConceptImpl Action where
+  toOpenAPISpec : Action -> Json
   | {name:=n, args:=a, ret:=r} =>
     Json.mkObj [(
       s!"/{n}", Json.mkObj [(
@@ -67,7 +58,7 @@ instance [ToConceptImpl α]: ToJson (AAction α)  where
             "'200'", Json.mkObj [(
               "content", Json.mkObj [(
                 "application/json", Json.mkObj [(
-                  "schema", ToConceptImpl.toSchema r
+                  "schema", ToSchema.toJsonSchema r
                 )]
               )]
             )]
@@ -76,32 +67,26 @@ instance [ToConceptImpl α]: ToJson (AAction α)  where
     ]
     )]
 
-def actionExample: (AAction ConceptPrimitiveTypes):= {
-  name := "name",
-  args := #[{name:= "foo", type := ConceptPrimitiveTypes.Number}]
-  ret := ConceptPrimitiveTypes.Number
-}
-#eval toJson actionExample
+-- NB (nphair): This might be too agressive.
+instance [ToConceptImpl α]: ToConceptImpl (Array α) where
+  toOpenAPISpec x := Json.arr (Array.map ToConceptImpl.toOpenAPISpec x)
 
-def actionArrayExample: Array (AAction ConceptPrimitiveTypes) := #[ actionExample ]
-#eval toJson actionArrayExample
-
-
-structure Concept (α : Type) [ToConceptImpl α]where
+structure Concept where
   (name : String)
   (purpose : String)
-  (actions : Array (AAction α))
+  (actions : Array Action)
   (operationalPrinciple : String)
 
-instance [ToConceptImpl α]: ToJson (Concept α)  where
-  toJson: (Concept α) -> Json
+instance: ToConceptImpl Concept where
+  toOpenAPISpec: Concept -> Json
   | {name:=n,purpose:=p, actions:=a, operationalPrinciple:=op} =>
     Json.mkObj [
       ("openapi", "3.0.1"),
       ("info", Json.mkObj [
         ("name", n ),
-        ("description", p ++ newline ++ op)
+        ("description", p ++ "\n" ++ op)
       ]),
-      ("paths", toJson a)
+      ("paths", ToConceptImpl.toOpenAPISpec a)
     ]
+
 end Concepts
