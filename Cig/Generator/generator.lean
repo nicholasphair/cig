@@ -35,7 +35,7 @@ def toProperties: List (String × CTypes) → Json
 | [] => Json.mkObj []
 
 def ctypeToJsonSchema: CTypes → Json
-| CTypes.UserDefined (kvs: List (String × CTypes)) => Json.mkObj [("properties", toProperties kvs)]
+| CTypes.UserDefined (kvs: List (String × CTypes)) => Json.mkObj [("type", "object"), ("properties", toProperties kvs)]
 | x => ctypeToJsonSchemaAux x
 
 instance: ToSchema CTypes :=
@@ -49,38 +49,49 @@ structure Action where
 def toPair: (String × CTypes) → (String × Json)
 | (name, type) => (name, ToSchema.toJsonSchema type)
 
+def responseForRet(t: CTypes): Json :=
+  Json.mkObj [
+    ("responses", match t with
+      | CTypes.Unit => Json.mkObj [
+          ("200", Json.mkObj [("description", "200")])]
+      | ret => Json.mkObj [
+          ("200", Json.mkObj [
+            ("description", "200"),
+            ("content", Json.mkObj [
+              ("application/json", Json.mkObj [
+                ("schema", ToSchema.toJsonSchema ret)
+              ])
+            ])
+          ])
+        ]
+    )
+  ]
+
+def requestBodyForArgs: Array (String × CTypes) → Json
+| #[] => Json.mkObj []
+| args => Json.mkObj [
+  ("requestBody", Json.mkObj [
+    ("content", Json.mkObj [
+      ("application/json", Json.mkObj [
+        ("schema", Json.mkObj [
+          ( "properties", (Json.mkObj (Array.map toPair args).toList))
+        ])
+      ])
+    ])
+  ])
+]
+
 instance: ToConceptImpl Action where
   toOpenAPISpec : Action -> Json
   | {name:=n, args:=a, ret:=r} =>
-    Json.mkObj [(
-      s!"/{n}", Json.mkObj [(
-        "/get", Json.mkObj [(
-          "requestBody", Json.mkObj [(
-            "content", Json.mkObj [(
-              "application/json", Json.mkObj [(
-                "schema", Json.mkObj [(
-                  "properties", (Json.mkObj (Array.map toPair a).toList)
-                )]
-              )]
-            )]
-          )]
-      ), (
-          "responses", Json.mkObj [(
-            "'200'", Json.mkObj [(
-              "content", Json.mkObj [(
-                "application/json", Json.mkObj [(
-                  "schema", ToSchema.toJsonSchema r
-                )]
-              )]
-            )]
-          )]
-        )])
+    Json.mkObj [
+      (s!"/{n}", Json.mkObj [
+        ("post", Json.mergeObj
+          (requestBodyForArgs a)
+          (responseForRet r)
+        )
+      ])
     ]
-    )]
-
--- NB (nphair): This might be too agressive.
-instance [ToConceptImpl α]: ToConceptImpl (Array α) where
-  toOpenAPISpec x := Json.arr (Array.map ToConceptImpl.toOpenAPISpec x)
 
 structure Concept where
   (name : String)
@@ -94,10 +105,11 @@ instance: ToConceptImpl Concept where
     Json.mkObj [
       ("openapi", "3.0.1"),
       ("info", Json.mkObj [
-        ("name", n ),
-        ("description", p ++ "\n" ++ op)
+        ("title", n ),
+        ("description", p ++ "\n" ++ op),
+        ("version", "latest")
       ]),
-      ("paths", ToConceptImpl.toOpenAPISpec a)
+      ("paths", Array.foldl Json.mergeObj (Json.mkObj []) (Array.map ToConceptImpl.toOpenAPISpec a))
     ]
 
 end Concepts
