@@ -21,14 +21,25 @@ inductive CTypes
 | Unit: CTypes
 | Ptr (c: CTypes) : CTypes
 | Func (arg : CTypes) (ret: CTypes): CTypes
-| UserDefined (adt : Type) : CTypes
+| UserDefined (kvs: List (String × CTypes)) : CTypes
 
-instance: ToSchema CTypes where
-  toJsonSchema : CTypes → Json
-  | CTypes.Nat => Json.mkObj [("type", "number")]
-  | CTypes.Bool => Json.mkObj [("type", "boolean")]
-  | CTypes.String => Json.mkObj [("type", "string")]
-  | _ => Json.mkObj [("error", "NotImplemented")]
+-- Need `cytpeToJsonSchemaAux` and `toProperties` to show Lean our function terminates.
+def ctypeToJsonSchemaAux : CTypes → Json
+| CTypes.Nat => Json.mkObj [("type", "number")]
+| CTypes.Bool => Json.mkObj [("type", "boolean")]
+| CTypes.String => Json.mkObj [("type", "string")]
+| _ => Json.mkObj [("error", "NotImplemented")]
+
+def toProperties: List (String × CTypes) → Json
+| (s, t)::tail => Json.mergeObj (Json.mkObj [(s, ctypeToJsonSchemaAux t)]) (toProperties tail)
+| [] => Json.mkObj []
+
+def ctypeToJsonSchema: CTypes → Json
+| CTypes.UserDefined (kvs: List (String × CTypes)) => Json.mkObj [("properties", toProperties kvs)]
+| x => ctypeToJsonSchemaAux x
+
+instance: ToSchema CTypes :=
+ ⟨ctypeToJsonSchema⟩
 
 structure Action where
   name: String
